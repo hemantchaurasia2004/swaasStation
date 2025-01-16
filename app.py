@@ -1,4 +1,4 @@
-from flask import Flask, send_file, jsonify, request
+from flask import Flask, send_file, jsonify, request, make_response
 import qrcode
 from io import BytesIO
 import uuid
@@ -150,18 +150,19 @@ def test_db():
             'message': str(e)
         })
 
+
 @app.route('/generate_coupon')
 def generate_coupon():
     """Generate a new coupon and return as PDF"""
     try:
-        client_ip = request.remote_addr
-        
-        # Check if IP has already generated a coupon
-        if not is_ip_allowed(client_ip):
+        # Check for an existing cookie
+        if request.cookies.get('coupon_generated'):
             return jsonify({
                 'error': 'Coupon generation not allowed',
-                'message': 'You have already generated a coupon. Only one coupon per user is allowed.'
+                'message': 'You have already generated a coupon. Only one coupon per device is allowed.'
             }), 403
+        
+        client_ip = request.remote_addr
         
         # Check if coupon limit reached
         if not can_generate_coupon() and client_ip != MASTER_IP:
@@ -196,19 +197,23 @@ def generate_coupon():
         qr_buffer = generate_qr_code(coupon_id)
         pdf_buffer = create_coupon_pdf(coupon_id, qr_buffer, expiry_date)
         
-        return send_file(
+        # Set a cookie to prevent further generation
+        response = make_response(send_file(
             pdf_buffer,
             mimetype='application/pdf',
             as_attachment=True,
             download_name=f'swaad_station_coupon_{coupon_id}.pdf'
-        )
+        ))
+        response.set_cookie('coupon_generated', 'true', max_age=24 * 60 * 60)  # 1-day expiration
+        
+        return response
         
     except Exception as e:
         return jsonify({
             'status': 'error',
             'message': str(e)
         }), 500
-
+    
 @app.route('/validate_coupon/<coupon_id>')
 def validate_coupon(coupon_id):
     """Validate a coupon"""
@@ -299,4 +304,4 @@ def admin_stats():
         }), 500
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(debug=True)
